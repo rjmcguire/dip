@@ -4,16 +4,9 @@ import std.string;
 import std.process;
 import std.path;
 import std.algorithm : canFind;
+
+import globals;
 import resolve_dep;
-
-string droot="/usr/local/d"; // D installation directory
-string[] dpath=[]; // list of directories to look for libraries and source files for D
-
-string package_dir; // package we're working on, normally the current working directory
-
-const SOURCE_DIR = "src"; // TODO: how will we handle libraries where we only have .di files and the compiled library
-const LIBRARY_DIR = "lib";
-const BIN_DIR = "bin";
 
 static this() {
 	auto dpath_tmp = getenv("DPATH");
@@ -34,43 +27,30 @@ static this() {
 }
 
 // Load environment variables at start up.
-void init() {
-	if (package_dir==null)
-		package_dir = getcwd();
-
+Package init(string dir) {
 	// set up search path for D files
-	load_parent_dir_dpaths();
-	name = package_dir;
-	name = name[name.lastIndexOf(dirSeparator)+1..$];
+	load_parent_dir_dpaths(dir);
 
-	load_package_details();
+	return load_package_details(dir);
 }
 
-void print_package_details() {
-	writefln("Package: %s[%s]", name, version_str);
-	writefln("Dependencies: ");
-	foreach (dep; dependencies) {
-		writefln("\t%s[%s]: %s", dep.name, dep.version_str, (dep.linkonly?"-L-l"~dep.name:package_dependency_dir(dep.name)));
-	}
-}
-
-
-string name, version_str;
-Dependency[] dependencies;
-bool is_library = false;
-string[] flags;
-
-void load_package_details() {
+Package load_package_details(string dir) {
 	const VERSION_MARKER="*Version:*";
 	const NAME_MARKER="# ";
 	const DEPENDENCY_MARKER="## Dependencies:";
 	const FLAGS_MARKER="## Flags:";
+	const SKIP_FILES_MARKER="## Skip D Files:";
 
-	auto f = new File(package_dir ~dirSeparator~"README.md");
+	Package ret;
+	ret.dir = dir;
+	ret.name = ret.dir[ret.dir.lastIndexOf(dirSeparator)+1..$];
+
+	auto f = new File(ret.dir ~dirSeparator~"README.md");
 
 	uint i=0;
 	bool in_dependencies = false;
 	bool in_flags = false;
+	bool in_skip_files = false;
 	foreach (char[] line; f.byLine()) {
 		if (i==0) {
 			if (line.length<3 || !line.startsWith(NAME_MARKER)) {
@@ -81,8 +61,7 @@ void load_package_details() {
 					idx=line.length;
 
 				auto n = strip(line[1..idx]);
-				if (n!=name) {
-					writeln(n, name);
+				if (n!=ret.name) {
 					throw new Exception("Package name does not match name in README.md");
 				}
 			}
@@ -110,13 +89,13 @@ void load_package_details() {
 				if (idx==-1) {
 					throw new Exception("Dependency list invalid, correct format is: link name - description. list ends with blank line.");
 				}
-				dependencies ~= Dependency(strip(line[0..idx]).idup, strip(line[idx+1..$]).idup, true);
+				ret.dependencies ~= Dependency(strip(line[0..idx]).idup, strip(line[idx+1..$]).idup, true);
 			} else {
 				auto idx = line.indexOf(":");
 				if (idx==-1) {
 					throw new Exception("Dependency list invalid, correct format is:\" * name: version\". list ends with blank line.");
 				}
-				dependencies ~= Dependency(strip(line[0..idx]).idup, strip(line[idx+1..$]).idup);
+				ret.dependencies ~= Dependency(strip(line[0..idx]).idup, strip(line[idx+1..$]).idup);
 			}
 		}
 
@@ -135,33 +114,45 @@ void load_package_details() {
 			}
 			line = line[" * ".length..$];
 			if (line.strip()=="Library") {
-				is_library = true;
+				ret.isLibrary = true;
 			} else {
 				auto idx = line.lastIndexOf(" - ");
 				if (idx>0) {
 					line = line[0..idx];
 				}
-				flags ~= line.idup;
+				ret.flags ~= line.idup;
 			}
 			continue;
 		}
 
-		if (version_str==null && line.length>VERSION_MARKER.length && line[0..VERSION_MARKER.length]==VERSION_MARKER) {
-			version_str = strip(line[VERSION_MARKER.length..$]).idup;
+		if (line.startsWith(SKIP_FILES_MARKER)) {
+			in_skip_files = true;
+			continue;
+		}
+		if (in_skip_files) {
+			if (line.length<1) {
+				in_skip_files = false;
+				continue;
+			}
+			ret.skipDFiles ~= line.strip().idup;
+		}
+
+		if (ret.version_str==null && line.length>VERSION_MARKER.length && line[0..VERSION_MARKER.length]==VERSION_MARKER) {
+			ret.version_str = strip(line[VERSION_MARKER.length..$]).idup;
 		}
 	}
+	return ret;
 }
 
-void load_parent_dir_dpaths() {
+void load_parent_dir_dpaths(string dir) {
 	string[] newdpath = [];
-	auto cwd = package_dir;
-	for (;cwd.lastIndexOf(dirSeparator)>0;cwd = cwd[0..cwd.lastIndexOf(dirSeparator)]) {
-		auto entries = dirEntries(cwd, SpanMode.shallow);
-		foreach (dir; entries) {
-			if (!isDir(dir)) continue;
-			if (dir.lastIndexOf(dirSeparator)<=0) continue;
-			if (dir[dir.lastIndexOf(dirSeparator)+1..$]==".dpath") {
-				newdpath ~= dir;
+	for (;dir.lastIndexOf(dirSeparator)>0;dir = dir[0..dir.lastIndexOf(dirSeparator)]) {
+		auto entries = dirEntries(dir, SpanMode.shallow);
+		foreach (dir1; entries) {
+			if (!isDir(dir1)) continue;
+			if (dir1.lastIndexOf(dirSeparator)<=0) continue;
+			if (dir1[dir1.lastIndexOf(dirSeparator)+1..$]==".dpath") {
+				newdpath ~= dir1;
 			}
 		}
 	}
@@ -174,4 +165,45 @@ void load_parent_dir_dpaths() {
 struct Dependency {
 	string name,version_str;
 	bool linkonly;
+}
+
+struct Package {
+	bool isLibrary = false;
+	string name;
+	string version_str;
+	Dependency[] dependencies;
+	string[] flags;
+	string dir;
+	string[] skipDFiles;
+
+	void print_details() {
+		writefln("Package: %s[%s]", this.name, this.version_str);
+		writefln("Dependencies: ");
+		foreach (dep; this.dependencies) {
+			string dirfound = "Not Found";
+			try {
+				package_dependency_dir(dep.name);
+				dirfound = "Found";
+			} catch (Exception e) {
+			}
+			writefln("\t%s[%s]: %s", dep.name, dep.version_str, (dep.linkonly?"-l"~dep.name:dirfound));
+		}
+	}
+	// get all files in current directory
+	string[] get_dfiles() {
+		return get_dfiles(this.dir);
+	}
+	string[] get_dfiles(string dir) {
+		string[] dfiles = [];
+		auto entries = dirEntries(dir, SpanMode.shallow);
+		foreach (entry;  entries) {
+			if (isDir(entry))
+				dfiles ~= this.get_dfiles(entry);
+			if (entry.name=="." || entry.name==".." || !entry.name.endsWith(".d"))
+				continue;
+
+			dfiles ~= entry.name;
+		}
+		return dfiles;
+	}
 }

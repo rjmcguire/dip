@@ -1,4 +1,4 @@
-import load_package;
+import globals;
 
 import std.stdio;
 import std.file;
@@ -19,5 +19,5 @@ string package_search(string package_str) {
 			return tmp;
 		}
 	}
-	throw new Exception("Dependency not found: "~ package_str);
+	throw new Exception("Package not found: "~ package_str);
 }
