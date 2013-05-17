@@ -175,6 +175,7 @@ struct Package {
 	string[] flags;
 	string dir;
 	string[] skipDFiles;
+	bool isDubPackage;
 
 	void print_details() {
 		writefln("Package: %s[%s]", this.name, this.version_str);

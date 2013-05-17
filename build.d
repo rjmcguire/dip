@@ -8,14 +8,22 @@ import std.path;
 import std.file;
 
 import globals;
+import dub;
 
 bool listdeps_heading = true;
 
 DepArgs build_package(string dir, string tabs="") {
 	if (verbose) writeln("build package in: ", dir);
+	auto curdir = getcwd();
 	chdir(dir);
+	scope(exit) chdir(curdir);
 
-	auto p = init(dir);
+	Package p;
+	if (getDubPackage(&p)) {
+		writeln("package is:", p);
+	} else {
+		p = init(dir);
+	}
 
 	if (vverbose) {
 		writeln("** ENV **");
@@ -33,6 +41,13 @@ DepArgs build_package(string dir, string tabs="") {
 	if (listdependencies && listdeps_heading) { writeln("Listing dependencies:"); listdeps_heading=false; }
 	auto depargs = check_dependencies(p, tabs);
 	depargs.isLibrary = p.isLibrary;
+	if (p.isDubPackage) {
+		if (verbose) {
+			writeln("build dub package");
+		}
+		buildDubPackage(p);
+		return depargs;
+	}
 	if (listdependencies) return depargs;
 
 	string[] dfiles = p.get_dfiles();

@@ -20,7 +20,7 @@ void getpackage(string name) {
 		mkdirRecurse(package_dir);
 	}
 	chdir(package_dir);
-	writeln(getcwd());
+
 	auto domain = name[0..name.indexOf("/")];
 	auto cmd = hostingsites[domain].replace("$1", name);
 	writeln("Fetching: ", cmd);
